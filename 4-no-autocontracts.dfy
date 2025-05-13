@@ -68,10 +68,9 @@ class PriorityQueue {
 
   predicate heapifyUpInv(k: nat)
     reads this, heap
-    decreases {this, heap}, k
   {
     size <= heap.Length &&
-    (forall i: int {:trigger heap[i]} :: 1 <= i < size && i != k ==> heap[i] <= heap[(i - 1) / 2]) && 
+    (forall i: int {:trigger heap[i]} :: 1 <= i < size && i != k ==> heap[i] <= heap[(i - 1) / 2]) &&
     (k > 0 ==> forall i: int {:trigger heap[i]} :: 1 <= i < size && (i - 1) / 2 == k ==> heap[i] <= heap[((i - 1) / 2 - 1) / 2])
   }
 
@@ -104,10 +103,10 @@ class PriorityQueue {
   {
     var k: int := size - 1;
     while k > 0 && heap[k] > heap[(k - 1) / 2]
+      decreases k
       invariant 0 <= k < size
       invariant multiset(heap[..size]) == old(multiset(heap[..size]))
       invariant heapifyUpInv(k)
-      decreases k
     {
       heap[k], heap[(k - 1) / 2] := heap[(k - 1) / 2], heap[k];
       k := (k - 1) / 2;
@@ -117,7 +116,6 @@ class PriorityQueue {
   predicate isMax(x: T, s: multiset<T>)
     requires Valid()
     reads Repr
-    decreases Repr, x, s
   {
     x in s &&
     forall k: int {:trigger s[k]} :: k in s ==> x >= k
