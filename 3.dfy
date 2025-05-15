@@ -8,7 +8,7 @@ function abs(a : int) : int {
 
 datatype AVL = Leaf | Node(left:AVL, height: nat, key:int, right:AVL)
 
-function height(t : AVL) : nat {
+function height(t : AVL) : int {
   match t
   case Leaf => 0
   case Node(l, h, _, r) => h
@@ -36,10 +36,11 @@ ghost predicate isAVL(t : AVL)
 {
   match t
   case Leaf => true
-  case Node(l, h, x, r) => h == height(t) && isAVL(l) && isAVL(r)
-                           && -1 <= height(l) - height(r) <= 1 &&
-                           (forall z :: z in treetoset(l) ==> z < x)
-                           && (forall z :: z in treetoset(r) ==> z > x)
+  case Node(l, h, x, r) => 
+    h == height(t) && isAVL(l) && isAVL(r)
+    && -1 <= height(l) - height(r) <= 1 &&
+    (forall z :: z in treetoset(l) ==> z < x)
+    && (forall z :: z in treetoset(r) ==> z > x)
 }
 
 // added {:axiom} so that the compiler didn't complain about the ensures clauses in a bodyless function
@@ -77,77 +78,49 @@ function size(t : AVL) : nat
   case Node(l, _, _, r) => 1 + size(l) + size(r)
 }
 
-function update_height(l: AVL, x: int, r: AVL): AVL
-{
-  Node(l, 1 + max(height(l), height(r)), x, r)
-}
-
-lemma insert_aux_preserves_ordering(x: int, t: AVL)
-  requires isAVL(t)
-  ensures
-    match t
-    case Leaf => true
-    case Node(l, h, k, r) =>
-      (x < k ==>
-         (forall z :: z in treetoset(insert_aux(x, l)) ==> z < k) &&
-         (forall z :: z in treetoset(r) ==> z > k)) &&
-      (x > k ==>
-         (forall z :: z in treetoset(l) ==> z < k) &&
-         (forall z :: z in treetoset(insert_aux(x, r)) ==> z > k))
-  decreases t
-{
-  match t {
-    case Leaf => {}
-    case Node(l, h, k, r) =>
-      if x < k {
-        insert_aux_preserves_ordering(x, l);
-      } else if x > k {
-        insert_aux_preserves_ordering(x, r);
-      }
-  }
-}
-
-function insert_aux(x: int, t: AVL): (res: AVL)
-  decreases t
-  ensures t == Leaf ==> res == Node(Leaf, 1, x, Leaf)
-  ensures t != Leaf ==> treetoset(res) == treetoset(t) + {x}
-  ensures t != Leaf ==>
-            match t
-            case Node(l, h, k, r) =>
-              (x < k ==> res == Node(insert_aux(x, l), h, k, r)) &&
-              (x >= k ==> res == Node(l, h, k, insert_aux(x, r)))
-{
-  match t
-  case Leaf => Node(Leaf, 1, x, Leaf)
-  case Node(l, h, k, r) =>
-    if x < k then Node(insert_aux(x, l), h, k, r)
-    else if x > k then Node(l, h, k, insert_aux(x, r))
-    else
-      insert_aux_preserves_ordering(x, t);
-      t
-}
-
-function insert(x: int, t: AVL): (res: AVL)
-  decreases t
+method insert(x: int, t: AVL) returns (res: AVL)
   requires isAVL(t)
   ensures isAVL(res)
   ensures treetoset(res) == treetoset(t) + {x}
+  ensures height(res) <= height(t) + 1
+  decreases size(t)
 {
   match t
-  case Leaf => Node(Leaf, 1, x, Leaf)
+  case Leaf => 
+    res := Node(Leaf, 1, x, Leaf);
+    assert height(res) == 1; 
   case Node(l, h, k, r) =>
-    var new_tree := if x < k
-                    then update_height(insert(x, l), k, r)
-                    else if x > k
-                      then update_height(l, k, insert(x, r))
-                      else t;
+    if x < k {
+      var new_left := insert(x, l);
 
-    // check if rebalancing is needed
-    var hl := height(new_tree.left);
-    var hr := height(new_tree.right);
+      res := Node(new_left, 1 + max(height(new_left), height(r)), k, r);
 
-    if abs(hl - hr) <= 1 then new_tree
-    else equil(new_tree.left, new_tree.key, new_tree.right)
+      var hl := height(res.left);
+      var hr := height(res.right);
+
+      if abs(hl - hr) > 1 {
+        res := equil(res.left, res.key, res.right);
+      }
+    } else if x > k {
+      var new_right := insert(x, r);
+      res := Node(l, 1 + max(height(l), height(new_right)), k, new_right);
+
+      var hl := height(res.left);
+      var hr := height(res.right);
+
+      if abs(hl - hr) > 1 {
+        res := equil(res.left, res.key, res.right);
+      }
+    } else {
+      res := t;
+    }
+    assert height(res) <= height(t) + 1;  // Provide a hint to verifier
+}
+
+
+function update_height(l: AVL, x: int, r: AVL): AVL
+{
+  Node(l, 1 + max(height(l), height(r)), x, r)
 }
 
 function {:axiom} deleteMin(t : AVL) : (res : (int, AVL))
@@ -182,10 +155,13 @@ function delete(x : int, t : AVL) : (res : AVL)
         var hl := height(new_tree.left);
         var hr := height(new_tree.right);
 
-        if abs(hl - hr) <= 1 then
-          new_tree
-        else
-          equil(new_tree.left, new_tree.key, new_tree.right)
+        match new_tree
+        case Leaf => Leaf
+        case Node(l1, _, key, r1) =>
+          if abs(hl - hr) <= 1 then
+            new_tree
+          else
+            equil(l1, key, r1)
 
     // delete on the left
     else if x < k then
@@ -195,10 +171,13 @@ function delete(x : int, t : AVL) : (res : AVL)
       var hl := height(new_tree.left);
       var hr := height(new_tree.right);
 
-      if abs(hl - hr) <= 1 then
-        new_tree
-      else
-        equil(new_tree.left, new_tree.key, new_tree.right)
+      match new_tree
+      case Leaf => Leaf
+      case Node(l1, _, key, r1) =>
+        if abs(hl - hr) <= 1 then
+          new_tree
+        else
+          equil(l1, key, r1)
 
     // delete on the right
     else
@@ -208,10 +187,11 @@ function delete(x : int, t : AVL) : (res : AVL)
       var hl := height(new_tree.left);
       var hr := height(new_tree.right);
 
-      if abs(hl - hr) <= 1 then
-        new_tree
-      else
-        equil(new_tree.left, new_tree.key, new_tree.right)
+      match new_tree
+      case Leaf => Leaf
+      case Node(l1, _, key, r1) =>
+        if abs(hl - hr) <= 1 then
+          new_tree
+        else
+          equil(l1, key, r1)
 }
-
-// TODO: e)
