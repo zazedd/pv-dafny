@@ -14,6 +14,44 @@ function height(t : AVL) : int {
   case Node(l, h, _, r) => h
 }
 
+function height2(t : AVL) : int {
+  match t
+  case Leaf => 0
+  case Node(l, _, _, r) => max(height2(l), height2(r)) + 1
+}
+
+lemma heightEquiv(t: AVL)
+  requires isAVL(t)
+  ensures height(t) == height2(t)
+  decreases t
+{
+  match t {
+    case Leaf => 
+      assert height(t) == 0;
+      assert height2(t) == 0;
+    case Node(l, h, _, r) =>
+      // apply induction to both subtrees
+      heightEquiv(l);
+      heightEquiv(r);
+
+      // by induction hypothesis, we know:
+      assert height(l) == height2(l);
+      assert height(r) == height2(r);
+
+      // by definition of isAVL
+      assert h == max(height(l), height(r)) + 1;
+
+      // by definition of height, height(t) equals h
+      assert height(t) == h;
+
+      assert height2(t) == max(height2(l), height2(r)) + 1;
+
+      // IHip
+      assert height2(t) == max(height(l), height(r)) + 1;
+      assert height(t) == height2(t);
+  }
+}
+
 function treetoset(t: AVL): set<int>
   decreases t
 {
@@ -37,7 +75,8 @@ ghost predicate isAVL(t : AVL)
   match t
   case Leaf => true
   case Node(l, h, x, r) => 
-    h == height(t) && isAVL(l) && isAVL(r)
+    h == height(t) && isAVL(l) && isAVL(r) &&
+    h == height2(t)
     && -1 <= height(l) - height(r) <= 1 &&
     (forall z :: z in treetoset(l) ==> z < x)
     && (forall z :: z in treetoset(r) ==> z > x)
@@ -63,7 +102,7 @@ ghost predicate isAVL(t : AVL)
   especially because it preserves the binary search tree properties, the height balancing factors and the preservation of the elements.
 */
 function {:axiom} equil(l : AVL, x : int, r : AVL) : AVL
-  requires (forall z :: z in treetoset(l) ==> z< x) && (forall z :: z in treetoset(r) ==> z > x)
+  requires (forall z :: z in treetoset(l) ==> z < x) && (forall z :: z in treetoset(r) ==> z > x)
   requires isAVL(l) && isAVL(r)
   requires abs(height(l) - height(r)) <= 2
   ensures isAVL(equil(l,x,r)) && equil(l,x,r) != Leaf
@@ -83,42 +122,55 @@ method insert(x: int, t: AVL) returns (res: AVL)
   ensures isAVL(res)
   ensures treetoset(res) == treetoset(t) + {x}
   ensures height(res) <= height(t) + 1
+  ensures height(res) >= height(t)
   decreases size(t)
 {
   match t
-  case Leaf => 
-    res := Node(Leaf, 1, x, Leaf);
-    assert height(res) == 1; 
+  case Leaf => res := Node(Leaf, 1, x, Leaf);
   case Node(l, h, k, r) =>
     if x < k {
       var new_left := insert(x, l);
-
       res := Node(new_left, 1 + max(height(new_left), height(r)), k, r);
+
+      heightEquiv(t);
 
       var hl := height(res.left);
       var hr := height(res.right);
 
       if abs(hl - hr) > 1 {
         res := equil(res.left, res.key, res.right);
+
+        heightEquiv(res.left);
+        heightEquiv(res.right);
+        assert height(res) <= height(t) + 1;
       }
     } else if x > k {
       var new_right := insert(x, r);
+
       res := Node(l, 1 + max(height(l), height(new_right)), k, new_right);
+
+      heightEquiv(t);
 
       var hl := height(res.left);
       var hr := height(res.right);
 
       if abs(hl - hr) > 1 {
         res := equil(res.left, res.key, res.right);
+
+        heightEquiv(res.left);
+        heightEquiv(res.right);
+        assert height(res) <= height(t) + 1;
       }
     } else {
       res := t;
+      assert height(res) == height(t);
     }
-    assert height(res) <= height(t) + 1;  // Provide a hint to verifier
 }
 
-
-function update_height(l: AVL, x: int, r: AVL): AVL
+function update_height(l: AVL, x: int, r: AVL) : (res: AVL)
+  ensures (isAVL(l) && isAVL(r) && -1 <= height(l) - height(r) <= 1 &&
+            (forall z :: z in treetoset(l) ==> z < x) && 
+            (forall z :: z in treetoset(r) ==> z > x)) ==> isAVL(res)
 {
   Node(l, 1 + max(height(l), height(r)), x, r)
 }
@@ -137,24 +189,34 @@ function delete(x : int, t : AVL) : (res : AVL)
   requires isAVL(t)
   ensures isAVL(res)
   ensures treetoset(res) == treetoset(t) - {x}
+  ensures height(res) <= height(t)
+  ensures height(res) >= height(t) - 1
 {
   match t
   case Leaf => Leaf
-  case Node(l, _, k, r) =>
+  case Node(l, h, k, r) =>
     // deleting current node
     if x == k then
       match (l, r)
-      case (Leaf, Leaf) => Leaf
-      case (Node(_, _, _, _), Leaf) => l
-      case (Leaf, Node(_, _, _, _)) => r
+      case (Leaf, Leaf) => 
+        assert height2(t) == 1;
+        Leaf
+      case (Node(_, _, _, _), Leaf) => 
+        heightEquiv(t);
+        l
+      case (Leaf, Node(_, h2, _, _)) => 
+        heightEquiv(t);
+        r
       case (Node(_, _, _, _), Node(_, _, _, _)) =>
         var (min_val, new_right) := deleteMin(r);
+
         var new_tree := update_height(l, min_val, new_right);
 
         // check if rebalancing is needed
         var hl := height(new_tree.left);
         var hr := height(new_tree.right);
 
+        assert abs(hl - hr) <= 2;
         match new_tree
         case Leaf => Leaf
         case Node(l1, _, key, r1) =>
@@ -166,6 +228,7 @@ function delete(x : int, t : AVL) : (res : AVL)
     // delete on the left
     else if x < k then
       var new_left := delete(x, l);
+
       var new_tree := update_height(new_left, k, r);
 
       var hl := height(new_tree.left);
@@ -181,8 +244,9 @@ function delete(x : int, t : AVL) : (res : AVL)
 
     // delete on the right
     else
-      var new_left := delete(x, r);
-      var new_tree := update_height(new_left, k, r);
+      assert x > k;
+      var new_right := delete(x, r);
+      var new_tree := update_height(l, k, new_right);
 
       var hl := height(new_tree.left);
       var hr := height(new_tree.right);
